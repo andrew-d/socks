@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 
 	"github.com/armon/go-socks5"
 	flag "github.com/ogier/pflag"
+	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -14,6 +16,7 @@ var (
 	flagPort                  uint16
 	flagAllowedSourceIPs      StringSlice
 	flagAllowedDestinationIPs StringSlice
+	flagRemoteListener        string
 )
 
 func init() {
@@ -21,6 +24,8 @@ func init() {
 	flag.Uint16VarP(&flagPort, "port", "p", 8000, "port to listen on")
 	flag.VarP(&flagAllowedSourceIPs, "source-ips", "s", "valid source IP addresses")
 	flag.VarP(&flagAllowedDestinationIPs, "dest-ips", "d", "valid destination IP addresses")
+	flag.StringVar(&flagRemoteListener, "remote-listener", "",
+		"open the SOCKS port on the remote address (e.g. ssh://user:pass@host:port)")
 }
 
 type Rules struct{}
@@ -78,6 +83,8 @@ func main() {
 		}
 	}
 
+	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
+
 	// Create a SOCKS5 server
 	conf := &socks5.Config{
 		Rules: Rules{},
@@ -87,10 +94,56 @@ func main() {
 		log.Fatalf("could not create SOCKS server: %s", err)
 	}
 
-	// Create SOCKS5 proxy on localhost port 8000
-	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
-	log.Printf("starting server on: %s", addr)
-	if err := server.ListenAndServe("tcp", addr); err != nil {
-		log.Fatalf("could not listen: %s", err)
+	if flagRemoteListener == "" {
+		// Create SOCKS5 proxy locally
+		log.Printf("starting server on: %s", addr)
+		if err := server.ListenAndServe("tcp", addr); err != nil {
+			log.Fatalf("could not listen: %s", err)
+		}
+
+		return
 	}
+
+	u, err := url.Parse(flagRemoteListener)
+	if err != nil {
+		log.Fatalf("error parsing url: %s", err)
+	}
+	if u.Scheme != "ssh" {
+		log.Fatalf("url is not an SSH url: %s", flagRemoteListener)
+	}
+	if u.User == nil {
+		log.Fatalf("no username provided in remote listener", err)
+	}
+
+	// TODO: ssh key?
+	pass, havePass := u.User.Password()
+	if !havePass {
+		log.Fatalf("no password provided in remote listener", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: u.User.Username(),
+		Auth: []ssh.AuthMethod{
+			ssh.Password(pass),
+		},
+	}
+
+	sshConn, err := ssh.Dial("tcp", u.Host, config)
+	if err != nil {
+		log.Fatalf("error dialing remote host: %s", err)
+	}
+	defer sshConn.Close()
+
+	l, err := sshConn.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("error listening on remote host: %s", err)
+	}
+	defer l.Close()
+
+	log.Printf("starting socks proxy on: %s (remote addr: %s)", u.Host, addr)
+	if err := server.Serve(l); err != nil {
+		log.Fatalf("could not serve socks proxy: %s", err)
+	}
+
+	fmt.Println("done")
 }
