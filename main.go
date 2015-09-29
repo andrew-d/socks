@@ -22,8 +22,10 @@ var (
 func init() {
 	flag.StringVarP(&flagHost, "host", "h", "", "host to listen on")
 	flag.Uint16VarP(&flagPort, "port", "p", 8000, "port to listen on")
-	flag.VarP(&flagAllowedSourceIPs, "source-ips", "s", "valid source IP addresses")
-	flag.VarP(&flagAllowedDestinationIPs, "dest-ips", "d", "valid destination IP addresses")
+	flag.VarP(&flagAllowedSourceIPs, "source-ips", "s",
+		"valid source IP addresses (if none given, all allowed)")
+	flag.VarP(&flagAllowedDestinationIPs, "dest-ips", "d",
+		"valid destination IP addresses (if none given, all allowed)")
 	flag.StringVar(&flagRemoteListener, "remote-listener", "",
 		"open the SOCKS port on the remote address (e.g. ssh://user:pass@host:port)")
 }
@@ -113,6 +115,9 @@ func main() {
 	}
 	if u.User == nil {
 		log.Fatalf("no username provided in remote listener", err)
+	}
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		log.Printf("warning: path, query, and fragment have no meaning in remote listener URL")
 	}
 
 	// TODO: ssh key?
