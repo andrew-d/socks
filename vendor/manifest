@@ -1,0 +1,31 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "github.com/armon/go-socks5",
+			"repository": "https://github.com/armon/go-socks5",
+			"revision": "00354d696e15b74c9f3f0d17d2286a03aef14d6b",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/ogier/pflag",
+			"repository": "https://github.com/ogier/pflag",
+			"revision": "6f7159c3154e7cd4ab30f6cc9c58fa3fd0f22325",
+			"branch": "master"
+		},
+		{
+			"importpath": "golang.org/x/crypto/curve25519",
+			"repository": "https://go.googlesource.com/crypto",
+			"revision": "59a4410d829a8bb774b02b56d4aeab633414f233",
+			"branch": "master",
+			"path": "/curve25519"
+		},
+		{
+			"importpath": "golang.org/x/crypto/ssh",
+			"repository": "https://go.googlesource.com/crypto",
+			"revision": "59a4410d829a8bb774b02b56d4aeab633414f233",
+			"branch": "master",
+			"path": "/ssh"
+		}
+	]
+}
