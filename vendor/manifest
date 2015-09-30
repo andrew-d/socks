@@ -2,6 +2,12 @@
 	"version": 0,
 	"dependencies": [
 		{
+			"importpath": "comail.io/go/colog",
+			"repository": "https://github.com/comail/colog.git",
+			"revision": "83af66bac88aecb569b3867c950a5a3a9b5f991b",
+			"branch": "master"
+		},
+		{
 			"importpath": "github.com/armon/go-socks5",
 			"repository": "https://github.com/armon/go-socks5",
 			"revision": "00354d696e15b74c9f3f0d17d2286a03aef14d6b",
