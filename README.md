@@ -27,3 +27,9 @@ listening port on `my-laptop` with address `localhost:8000`.  As such, on
 `my-laptop`, you can use the address `localhost:8000` as a SOCKS proxy, and it
 will properly forward traffic back over the SSH connection and out of the SOCKS
 proxy as normal.
+
+## Building
+
+    GO15VENDOREXPERIMENT=1 go build -v .
+
+I have successfully used this program on all of Linux, OS X, and Windows.
