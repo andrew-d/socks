@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 
 	"comail.io/go/colog"
 	"github.com/armon/go-socks5"
@@ -133,6 +134,13 @@ func runSSH(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	sshHost := args[0]
+
+	// Add a default ':22' after the end if we don't have a colon.
+	if !strings.Contains(sshHost, ":") {
+		sshHost += ":22"
+	}
+
 	config := &ssh.ClientConfig{
 		User: flagSSHUsername,
 		Auth: []ssh.AuthMethod{},
@@ -143,7 +151,7 @@ func runSSH(cmd *cobra.Command, args []string) {
 		config.Auth = append(config.Auth, ssh.Password(flagSSHPassword))
 	} else {
 		config.Auth = append(config.Auth, ssh.PasswordCallback(func() (string, error) {
-			prompt := fmt.Sprintf("%s@%s's password: ", flagSSHUsername, args[0])
+			prompt := fmt.Sprintf("%s@%s's password: ", flagSSHUsername, sshHost)
 			return speakeasy.Ask(prompt)
 		}))
 	}
@@ -168,7 +176,7 @@ func runSSH(cmd *cobra.Command, args []string) {
 	// TODO: keyboard-interactive auth, e.g. for two-factor
 
 	// Dial the SSH connection
-	sshConn, err := ssh.Dial("tcp", args[0], config)
+	sshConn, err := ssh.Dial("tcp", sshHost, config)
 	if err != nil {
 		log.Fatalf("error: error dialing remote host: %s", err)
 	}
@@ -181,7 +189,7 @@ func runSSH(cmd *cobra.Command, args []string) {
 	}
 
 	// Start SOCKS server.
-	startSocksServer(l, args[0])
+	startSocksServer(l, sshHost)
 }
 
 func startSocksServer(l net.Listener, listenHost string) error {
