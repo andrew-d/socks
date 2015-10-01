@@ -14,3 +14,7 @@ func (s *StringSlice) Set(value string) error {
 	*s = append(*s, value)
 	return nil
 }
+
+func (s *StringSlice) Type() string {
+	return "string slice"
+}

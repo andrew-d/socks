@@ -2,18 +2,21 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
-	"net/url"
 	"os"
 
 	"comail.io/go/colog"
 	"github.com/armon/go-socks5"
-	flag "github.com/ogier/pflag"
+	"github.com/bgentry/speakeasy"
+	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 var (
+	// Global flags
 	flagTrace                 bool
 	flagVerbose               bool
 	flagQuiet                 bool
@@ -21,28 +24,59 @@ var (
 	flagPort                  uint16
 	flagAllowedSourceIPs      StringSlice
 	flagAllowedDestinationIPs StringSlice
-	flagRemoteListener        string
+
+	// SSH flags
+	flagSSHUsername     string
+	flagSSHPassword     string
+	flagSSHIdentityFile string
+
+	// Derived flags
+	flagAddr string
+
+	// Logger instance
+	logger *log.Logger
 )
 
-func init() {
-	flag.BoolVarP(&flagVerbose, "verbose", "v", false, "be more verbose")
-	flag.BoolVarP(&flagQuiet, "quiet", "q", false, "be quiet")
-	flag.BoolVarP(&flagTrace, "trace", "t", false, "trace bytes copied")
-
-	flag.StringVarP(&flagHost, "host", "h", "", "host to listen on")
-	flag.Uint16VarP(&flagPort, "port", "p", 8000, "port to listen on")
-	flag.VarP(&flagAllowedSourceIPs, "source-ips", "s",
-		"valid source IP addresses (if none given, all allowed)")
-	flag.VarP(&flagAllowedDestinationIPs, "dest-ips", "d",
-		"valid destination IP addresses (if none given, all allowed)")
-
-	flag.StringVar(&flagRemoteListener, "remote-listener", "",
-		"open the SOCKS port on the remote address (e.g. ssh://user:pass@host:port)")
+var socksCommand = &cobra.Command{
+	Use:              "socks",
+	Short:            "simple utility to start a SOCKS proxy",
+	Run:              runSocks,
+	PersistentPreRun: preRun,
 }
 
-func main() {
-	flag.Parse()
-	logger, cl := makeLogger()
+var sshCommand = &cobra.Command{
+	Use:   "ssh <remote host>",
+	Short: "connect to a remote host over SSH and start a SOCKS proxy there",
+	Run:   runSSH,
+}
+
+func init() {
+	// Global flags
+	pf := socksCommand.PersistentFlags()
+	pf.BoolVarP(&flagVerbose, "verbose", "v", false, "be more verbose")
+	pf.BoolVarP(&flagQuiet, "quiet", "q", false, "be quiet")
+	pf.BoolVarP(&flagTrace, "trace", "t", false, "trace bytes copied")
+
+	pf.StringVarP(&flagHost, "address", "a", "", "address to listen on")
+	pf.Uint16VarP(&flagPort, "port", "p", 8000, "port to listen on")
+	pf.VarP(&flagAllowedSourceIPs, "source-ips", "s",
+		"valid source IP addresses (if none given, all allowed)")
+	pf.VarP(&flagAllowedDestinationIPs, "dest-ips", "d",
+		"valid destination IP addresses (if none given, all allowed)")
+
+	// SSH flags
+	sshFlags := sshCommand.Flags()
+	sshFlags.StringVarP(&flagSSHUsername, "username", "u", os.Getenv("USER"),
+		"connect as the given user")
+	sshFlags.StringVar(&flagSSHPassword, "password", "",
+		"use the given password to connect")
+	sshFlags.StringVarP(&flagSSHIdentityFile, "identity-file", "i", "",
+		"use the given SSH key to connect to the remote host")
+}
+
+func preRun(cmd *cobra.Command, args []string) {
+	var cl *colog.CoLog
+	logger, cl = makeLogger()
 
 	if flagTrace {
 		cl.SetMinLevel(colog.LTrace)
@@ -68,7 +102,94 @@ func main() {
 		}
 	}
 
-	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
+	// Get address flag
+	flagAddr = fmt.Sprintf("%s:%d", flagHost, flagPort)
+}
+
+func main() {
+	socksCommand.AddCommand(sshCommand)
+	socksCommand.Execute()
+}
+
+func runSocks(cmd *cobra.Command, args []string) {
+	if len(args) != 0 {
+		log.Println("warn: the default command does not take any arguments")
+	}
+
+	// Listen on a local port and serve.
+	l, err := net.Listen("tcp", flagAddr)
+	if err != nil {
+		log.Fatalf("error: error listening: %s", err)
+	}
+
+	startSocksServer(l, flagAddr)
+}
+
+func runSSH(cmd *cobra.Command, args []string) {
+	if len(args) != 1 {
+		log.Printf("error: invalid number of arguments provided (%d)", len(args))
+		return
+	}
+
+	config := &ssh.ClientConfig{
+		User: flagSSHUsername,
+		Auth: []ssh.AuthMethod{},
+	}
+
+	// Password auth or prompt callback
+	if flagSSHPassword != "" {
+		config.Auth = append(config.Auth, ssh.Password(flagSSHPassword))
+	} else {
+		config.Auth = append(config.Auth, ssh.PasswordCallback(func() (string, error) {
+			prompt := fmt.Sprintf("%s@%s's password: ", flagSSHUsername, args[0])
+			return speakeasy.Ask(prompt)
+		}))
+	}
+
+	// Key auth
+	if flagSSHIdentityFile != "" {
+		keyData, err := ioutil.ReadFile(flagSSHIdentityFile)
+		if err != nil {
+			log.Fatalf("error: could not read key file `%s`: %s", flagSSHIdentityFile, err)
+		}
+
+		signer, err := ssh.ParsePrivateKey(keyData)
+		if err != nil {
+			log.Fatalf("error: could not parse key file `%s`: %s", flagSSHIdentityFile, err)
+		}
+
+		config.Auth = append(config.Auth, ssh.PublicKeys(signer))
+	}
+
+	// SSH agent auth
+	if agentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err != nil {
+		config.Auth = append(config.Auth,
+			ssh.PublicKeysCallback(agent.NewClient(agentConn).Signers))
+	}
+
+	// TODO: keyboard-interactive auth, e.g. for two-factor
+
+	log.Printf("debug: auth methods are: %#v", config.Auth)
+
+	// Dial the SSH connection
+	sshConn, err := ssh.Dial("tcp", args[0], config)
+	if err != nil {
+		log.Fatalf("error: error dialing remote host: %s", err)
+	}
+	defer sshConn.Close()
+
+	// Listen on remote
+	l, err := sshConn.Listen("tcp", flagAddr)
+	if err != nil {
+		log.Fatalf("error: error listening on remote host: %s", err)
+	}
+
+	// Start SOCKS server.
+	startSocksServer(l, args[0])
+}
+
+func startSocksServer(l net.Listener, listenHost string) error {
+	defer l.Close()
 
 	// Create a SOCKS5 server
 	conf := &socks5.Config{
@@ -77,69 +198,18 @@ func main() {
 	}
 	server, err := socks5.New(conf)
 	if err != nil {
-		log.Fatalf("error: could not create SOCKS server: %s", err)
+		log.Printf("error: could not create SOCKS server: %s", err)
+		return err
 	}
 
-	// Create the listener
-	var (
-		l          net.Listener
-		listenHost string
-	)
-
-	if flagRemoteListener != "" {
-		u, err := url.Parse(flagRemoteListener)
-		if err != nil {
-			log.Fatalf("error: error parsing url: %s", err)
-		}
-		if u.Scheme != "ssh" {
-			log.Fatalf("error: url is not an SSH url: %s", flagRemoteListener)
-		}
-		if u.User == nil {
-			log.Fatalf("error: no username provided in remote listener", err)
-		}
-		if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-			log.Printf("warning: path, query, and fragment have no meaning in remote listener URL")
-		}
-
-		listenHost = u.Host
-
-		// TODO: ssh key?
-		pass, havePass := u.User.Password()
-		if !havePass {
-			log.Fatalf("error: no password provided in remote listener", err)
-		}
-
-		config := &ssh.ClientConfig{
-			User: u.User.Username(),
-			Auth: []ssh.AuthMethod{
-				ssh.Password(pass),
-			},
-		}
-
-		sshConn, err := ssh.Dial("tcp", u.Host, config)
-		if err != nil {
-			log.Fatalf("error: error dialing remote host: %s", err)
-		}
-		defer sshConn.Close()
-
-		l, err = sshConn.Listen("tcp", addr)
-		if err != nil {
-			log.Fatalf("error: error listening on remote host: %s", err)
-		}
-	} else {
-		// Listen on a local port
-		listenHost = "localhost"
-		l, err = net.Listen("tcp", addr)
-	}
-
-	defer l.Close()
-
-	log.Printf("info: starting socks proxy on: %s (proxy addr: %s)", listenHost, addr)
+	log.Printf("info: starting socks proxy on: %s (proxy addr: %s)", listenHost, flagAddr)
 	if err := server.Serve(l); err != nil {
-		log.Fatalf("error: could not serve socks proxy: %s", err)
+		log.Printf("error: could not serve socks proxy: %s", err)
+		return err
 	}
 
 	log.Println("debug: done")
+	return nil
 }
 
 func makeLogger() (*log.Logger, *colog.CoLog) {
