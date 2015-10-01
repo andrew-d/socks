@@ -94,14 +94,14 @@ func preRun(cmd *cobra.Command, args []string) {
 	if len(flagAllowedSourceIPs) > 0 {
 		log.Println("info: Allowed source IPs:")
 		for _, host := range flagAllowedSourceIPs {
-			log.Printf("  - %s", host)
+			log.Printf("info:  - %s", host)
 		}
 	}
 
 	if len(flagAllowedDestinationIPs) > 0 {
 		log.Println("info: Allowed destination IPs:")
 		for _, host := range flagAllowedDestinationIPs {
-			log.Printf("  - %s", host)
+			log.Printf("info:  - %s", host)
 		}
 	}
 
@@ -295,6 +295,7 @@ func makeLogger() (*log.Logger, *colog.CoLog) {
 	// This header is from the SOCKS package, and is actually at the 'Trace'
 	// level, in that it shows all bytes copied
 	colog.AddHeader("[DEBUG] ", colog.LTrace)
+	colog.AddHeader("[ERR] ", colog.LError)
 
 	// Overwrite both standard library and custom logger with this colog instance.
 	log.SetOutput(cl)
