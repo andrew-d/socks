@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -148,17 +150,13 @@ func runSSH(cmd *cobra.Command, args []string) {
 
 	// Key auth
 	if flagSSHIdentityFile != "" {
-		keyData, err := ioutil.ReadFile(flagSSHIdentityFile)
+		auth, err := loadPrivateKey(flagSSHIdentityFile)
 		if err != nil {
-			log.Fatalf("error: could not read key file `%s`: %s", flagSSHIdentityFile, err)
+			log.Fatalf("error: could not load identity file '%s': %s",
+				flagSSHIdentityFile, err)
 		}
 
-		signer, err := ssh.ParsePrivateKey(keyData)
-		if err != nil {
-			log.Fatalf("error: could not parse key file `%s`: %s", flagSSHIdentityFile, err)
-		}
-
-		config.Auth = append(config.Auth, ssh.PublicKeys(signer))
+		config.Auth = append(config.Auth, auth)
 	}
 
 	// SSH agent auth
@@ -168,8 +166,6 @@ func runSSH(cmd *cobra.Command, args []string) {
 	}
 
 	// TODO: keyboard-interactive auth, e.g. for two-factor
-
-	log.Printf("debug: auth methods are: %#v", config.Auth)
 
 	// Dial the SSH connection
 	sshConn, err := ssh.Dial("tcp", args[0], config)
@@ -210,6 +206,75 @@ func startSocksServer(l net.Listener, listenHost string) error {
 
 	log.Println("debug: done")
 	return nil
+}
+
+func loadPrivateKey(path string) (ssh.AuthMethod, error) {
+	// Read file
+	keyData, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Printf("error: could not read key file '%s': %s", path, err)
+		return nil, err
+	}
+
+	// Get first PEM block
+	block, _ := pem.Decode(keyData)
+	if err != nil {
+		log.Printf("error: no key found in file '%s': %s", path, err)
+		return nil, err
+	}
+
+	// If it's encrypted...
+	var (
+		signer    ssh.Signer
+		signerErr error
+	)
+
+	if x509.IsEncryptedPEMBlock(block) {
+		// Get the passphrase
+		prompt := fmt.Sprintf("Enter passphrase for key '%s': ", path)
+		pass, err := speakeasy.Ask(prompt)
+		if err != nil {
+			log.Printf("error: error getting passphrase: %s", err)
+			return nil, err
+		}
+
+		block.Bytes, err = x509.DecryptPEMBlock(block, []byte(pass))
+		if err != nil {
+			log.Printf("error: error decrypting key: %s", err)
+			return nil, err
+		}
+
+		key, err := ParsePEMBlock(block)
+		if err != nil {
+			log.Printf("error: could not parse PEM block: %s", err)
+			return nil, err
+		}
+
+		signer, signerErr = ssh.NewSignerFromKey(key)
+	} else {
+		signer, signerErr = ssh.ParsePrivateKey(keyData)
+	}
+
+	if signerErr != nil {
+		log.Printf("error: error parsing private key '%s': %s", path, signerErr)
+		return nil, signerErr
+	}
+
+	return ssh.PublicKeys(signer), nil
+}
+
+// See: https://github.com/golang/crypto/blob/master/ssh/keys.go#L598
+func ParsePEMBlock(block *pem.Block) (interface{}, error) {
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		return x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "EC PRIVATE KEY":
+		return x509.ParseECPrivateKey(block.Bytes)
+	case "DSA PRIVATE KEY":
+		return ssh.ParseDSAPrivateKey(block.Bytes)
+	default:
+		return nil, fmt.Errorf("ssh: unsupported key type %q", block.Type)
+	}
 }
 
 func makeLogger() (*log.Logger, *colog.CoLog) {
