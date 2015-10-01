@@ -41,14 +41,14 @@ var (
 
 var socksCommand = &cobra.Command{
 	Use:              "socks",
-	Short:            "simple utility to start a SOCKS proxy",
+	Short:            "simple utility to run a SOCKS proxy",
 	Run:              runSocks,
 	PersistentPreRun: preRun,
 }
 
 var sshCommand = &cobra.Command{
 	Use:   "ssh <remote host>",
-	Short: "connect to a remote host over SSH and start a SOCKS proxy there",
+	Short: "connect to a remote host over SSH and run a SOCKS proxy there",
 	Run:   runSSH,
 }
 

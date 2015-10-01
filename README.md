@@ -8,7 +8,7 @@ can operate in two modes:
 
 ### Mode One: Standard SOCKS
 
-In this mode, you run the program as normal (e.g. `./socks -h 192.168.0.1 -p
+In this mode, you run the program as normal (e.g. `./socks -a 192.168.0.1 -p
 8000`), and it opens and creates a SOCKS proxy for you.  Nothing particularly
 fancy :-)
 
@@ -19,11 +19,11 @@ wish to run the proxy on (e.g. due to endpoint firewalls, no admin access,
 etc.).  You can bypass this by (ab)using SSH port forwarding.  In this mode,
 you run the proxy like so:
 
-    ./socks -h localhost -p 8000 --remote-listener 'ssh://andrew:password@my-laptop:22'
+    ./socks ssh -a localhost -p 8000 -u andrew my-laptop:22
 
 In this case, the program opens an SSH connection to the host `my-laptop` on
-port 22, logs in with user `andrew` and password `password`, and then opens a
-listening port on `my-laptop` with address `localhost:8000`.  As such, on
+port 22, logs in with user `andrew` and prompts for a password, and then opens
+a listening port on `my-laptop` with address `localhost:8000`.  As such, on
 `my-laptop`, you can use the address `localhost:8000` as a SOCKS proxy, and it
 will properly forward traffic back over the SSH connection and out of the SOCKS
 proxy as normal.
