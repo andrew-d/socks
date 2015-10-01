@@ -20,13 +20,13 @@ import (
 
 var (
 	// Global flags
-	flagTrace                 bool
-	flagVerbose               bool
-	flagQuiet                 bool
-	flagHost                  string
-	flagPort                  uint16
-	flagAllowedSourceIPs      StringSlice
-	flagAllowedDestinationIPs StringSlice
+	flagTrace               bool
+	flagVerbose             bool
+	flagQuiet               bool
+	flagHost                string
+	flagPort                uint16
+	flagAllowedSources      StringSlice
+	flagAllowedDestinations StringSlice
 
 	// SSH flags
 	flagSSHUsername     string
@@ -34,7 +34,9 @@ var (
 	flagSSHIdentityFile string
 
 	// Derived flags
-	flagAddr string
+	flagAddr                  string
+	flagAllowedSourceIPs      []net.IP
+	flagAllowedDestinationIPs []net.IP
 
 	// Logger instance
 	logger *log.Logger
@@ -62,10 +64,10 @@ func init() {
 
 	pf.StringVarP(&flagHost, "address", "a", "", "address to listen on")
 	pf.Uint16VarP(&flagPort, "port", "p", 8000, "port to listen on")
-	pf.VarP(&flagAllowedSourceIPs, "source-ips", "s",
-		"valid source IP addresses (if none given, all allowed)")
-	pf.VarP(&flagAllowedDestinationIPs, "dest-ips", "d",
-		"valid destination IP addresses (if none given, all allowed)")
+	pf.VarP(&flagAllowedSources, "source-addr", "s",
+		"valid source addresses (if none given, all allowed)")
+	pf.VarP(&flagAllowedDestinations, "dest-addr", "d",
+		"valid destination addresses (if none given, all allowed)")
 
 	// SSH flags
 	sshFlags := sshCommand.Flags()
@@ -91,6 +93,40 @@ func preRun(cmd *cobra.Command, args []string) {
 		cl.SetMinLevel(colog.LInfo)
 	}
 
+	// Convert the source/destination addresses to IPs
+	log.Println("debug: resolving sources")
+	for _, host := range flagAllowedSources {
+		if ip := net.ParseIP(host); ip != nil {
+			flagAllowedSourceIPs = append(flagAllowedSourceIPs, ip)
+			continue
+		}
+
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			log.Printf("warn: could not resolve host '%s': %s", host, err)
+			continue
+		}
+
+		flagAllowedSourceIPs = append(flagAllowedSourceIPs, ips...)
+	}
+
+	log.Println("debug: resolving destinations")
+	for _, host := range flagAllowedDestinations {
+		if ip := net.ParseIP(host); ip != nil {
+			flagAllowedDestinationIPs = append(flagAllowedDestinationIPs, ip)
+			continue
+		}
+
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			log.Printf("warn: could not resolve host '%s': %s", host, err)
+			continue
+		}
+
+		flagAllowedDestinationIPs = append(flagAllowedDestinationIPs, ips...)
+	}
+
+	// Useful to debug what our final allowed hosts are
 	if len(flagAllowedSourceIPs) > 0 {
 		log.Println("info: Allowed source IPs:")
 		for _, host := range flagAllowedSourceIPs {
@@ -317,7 +353,7 @@ func (r Rules) AllowConnect(dstIP net.IP, dstPort int, srcIP net.IP, srcPort int
 
 	if len(flagAllowedSourceIPs) > 0 {
 		for _, ip := range flagAllowedSourceIPs {
-			if ip == srcIP.String() {
+			if ip.Equal(srcIP) {
 				sourceAllowed = true
 			}
 		}
@@ -327,7 +363,7 @@ func (r Rules) AllowConnect(dstIP net.IP, dstPort int, srcIP net.IP, srcPort int
 
 	if len(flagAllowedDestinationIPs) > 0 {
 		for _, ip := range flagAllowedDestinationIPs {
-			if ip == dstIP.String() {
+			if ip.Equal(dstIP) {
 				destAllowed = true
 			}
 		}
