@@ -184,8 +184,10 @@ func runSSH(cmd *cobra.Command, args []string) {
 
 	// Password auth or prompt callback
 	if flagSSHPassword != "" {
+		log.Println("trace: adding password auth")
 		config.Auth = append(config.Auth, ssh.Password(flagSSHPassword))
 	} else {
+		log.Println("trace: adding password callback auth")
 		config.Auth = append(config.Auth, ssh.PasswordCallback(func() (string, error) {
 			prompt := fmt.Sprintf("%s@%s's password: ", flagSSHUsername, sshHost)
 			return speakeasy.Ask(prompt)
@@ -200,11 +202,13 @@ func runSSH(cmd *cobra.Command, args []string) {
 				flagSSHIdentityFile, err)
 		}
 
+		log.Println("trace: adding identity file auth")
 		config.Auth = append(config.Auth, auth)
 	}
 
 	// SSH agent auth
 	if agentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err != nil {
+		log.Println("trace: adding ssh agent auth")
 		config.Auth = append(config.Auth,
 			ssh.PublicKeysCallback(agent.NewClient(agentConn).Signers))
 	}
@@ -212,6 +216,7 @@ func runSSH(cmd *cobra.Command, args []string) {
 	// TODO: keyboard-interactive auth, e.g. for two-factor
 
 	// Dial the SSH connection
+	log.Printf("debug: attempting %d authentication methods (%+v)", len(config.Auth), config.Auth)
 	sshConn, err := ssh.Dial("tcp", sshHost, config)
 	if err != nil {
 		log.Fatalf("error: error dialing remote host: %s", err)
